@@ -38,13 +38,13 @@ static unsigned char modFreq[8];
 static unsigned char modFreqCnt;
 static unsigned char h1, h2, l1, l2;
 
-void cleanup(void);
+void cleanupt(void);
 
 #define TRUE 1
 
 ///////////////////////// THIS IS FOR SETTING THE PORT
 
-void IrS_SetPortEqual(BYTE HiByte, BYTE LoByte) {
+void IrT_SetPortEqual(BYTE HiByte, BYTE LoByte) {
     if (irToy.HardwareVersion < 2) {
         LATC = (LATC & 0x3F) | (LoByte & 0xC0);
     } else {
@@ -53,7 +53,7 @@ void IrS_SetPortEqual(BYTE HiByte, BYTE LoByte) {
     }
 }
 
-void IrS_SetPortTrisEqual(BYTE HiByte, BYTE LoByte) {
+void IrT_SetPortTrisEqual(BYTE HiByte, BYTE LoByte) {
     if (irToy.HardwareVersion < 2) {
         TRISC = (TRISC & 0x3F) | (LoByte & 0xC0);
     } else {
@@ -62,7 +62,7 @@ void IrS_SetPortTrisEqual(BYTE HiByte, BYTE LoByte) {
     }
 }
 
-BYTE IrS_ReadPort(void) {
+BYTE IrT_ReadPort(void) {
     if (irToy.HardwareVersion < 2) {
         return PORTC & 0xC0;
     } else {
@@ -96,7 +96,7 @@ static struct {
 	unsigned char txerror : 1;
 } irS;
 
-void irsSetup(void) {
+void irtSetup(void) {
     BYTE dummy;
     T2IE = 0; //disable any Timer 2 interrupt
     IRRXIE = 0; //enable RX interrupts for data ACQ
@@ -189,7 +189,7 @@ void irsSetup(void) {
 
     dummy = IRRX_PORT; // Init read for PORTB IOR
     IRRXIF = 0; //Reset the RB Port Change Interrupt Flag bit
-    IRRXIE = 1; //Enables the RB port change interrupt
+    IRRXIE = 0; //Enables the RB port change interrupt
 
 }
 
@@ -248,7 +248,7 @@ static unsigned char TxBuffCtr; //this is a total hack, needed for updated getUS
 // moves bytes in and out
 //
 
-unsigned char irsService(void) {
+unsigned char irtService(void) {
     static unsigned char i;
     static unsigned int txcnt;
     static _smio irIOstate = I_IDLE;
@@ -398,7 +398,7 @@ unsigned char irsService(void) {
 
 
                     case IRIO_RESET: //reset, return to RC5 (same as SUMP)
-                        cleanup();
+                        cleanupt();
                         LedOff();
                         LedOut();
                         return 1; //need to flag exit!
@@ -448,7 +448,7 @@ unsigned char irsService(void) {
                         break;
                         // JTR3 End of new commands
  					case CDC_DESC:
-						cleanup();
+						cleanupt();
                         LedOff();
                         LedOut();
                         return 1; //need to flag exit!
@@ -489,7 +489,7 @@ unsigned char irsService(void) {
                     case IRIO_IO_READ: //return the port read
                         WaitInReady();
                         //cdc_In_buffer[0]=PORTB; //not just portB, but the IO pins in the correct order....
-                        cdc_In_buffer[0] = IrS_ReadPort(); //not just portB, but the IO pins in the correct order....
+                        cdc_In_buffer[0] = IrT_ReadPort(); //not just portB, but the IO pins in the correct order....
                         putUnsignedCharArrayUsbUsart(cdc_In_buffer, 1); //send current buffer to USB
                         break;
 
@@ -564,20 +564,20 @@ unsigned char irsService(void) {
 #if 0
                     case IRIO_IO_SET: //set these IO bits
                         //PORTB|=irIOcommand.command[1];
-                        IrS_SetPortOr(IRIO_COMMAND_PARAM);
+                        IrT_SetPortOr(IRIO_COMMAND_PARAM);
                         break;
                     case IRIO_IO_CLR: //clear these IO bits
                         //PORTB&=(~irIOcommand.command[1]);
-                        IrS_SetPortAnd(IRIO_COMMAND_PARAM); //
+                        IrT_SetPortAnd(IRIO_COMMAND_PARAM); //
                         break;
 #endif
                     case IRIO_IO_WRITE: //clear these IO bits
                         //PORTB=(irIOcommand.command[1]);
-                        IrS_SetPortEqual(IRIO_COMMAND_PARAM);
+                        IrT_SetPortEqual(IRIO_COMMAND_PARAM);
                         break;
                     case IRIO_IO_DIR: //Setup direction IO
                         //TRISB=irIOcommand.command[1];
-                        IrS_SetPortTrisEqual(IRIO_COMMAND_PARAM);
+                        IrT_SetPortTrisEqual(IRIO_COMMAND_PARAM);
                         break;
 #undef IRIO_COMMAND_PARAM
                     case IRIO_UART_WRITE:
@@ -596,79 +596,11 @@ unsigned char irsService(void) {
     }//switch
 
 
-    if (irS.overflow == 0) {
-        //service the inbound samples here
-        //keep in 64 byte buffer then send to USB for max sample rate
-        if (irS.rxflag1 == 1) { //a RX byte is in the buffer
-            *InPtr = h1; //add to USB send buffer
-            irS.RXsamples++;
-            InPtr++;
-            *InPtr = l1; //add to USB send buffer
-
-            irS.RXsamples++;
-            InPtr++;
-            irS.rxflag1 = 0; //reset the flag
-        }
-        if (irS.rxflag2 == 1) { //a RX byte is in the buffer
-            *InPtr = h2; //add to USB send buffer
-            irS.RXsamples++;
-            InPtr++;
-            *InPtr = l2; //add to USB send buffer
-
-            irS.RXsamples++;
-            InPtr++;
-            irS.rxflag2 = 0; //reset the flag
-        }
-
-        //if the buffer is full, send it to USB
-        if (((irS.RXsamples == CDC_BUFFER_SIZE) || (irS.flushflag == 1))) { // && (WaitInReady())) { //if we have full buffer, or end of capture flush
-
-            SendCDC_In_ArmNext(irS.RXsamples);
-
-            if ( irS.RXcompleted == 1) {
-                irIOstate = I_IDLE;
-                DisArmCDCInDB();
-
-                if (irS.RXsamples == CDC_BUFFER_SIZE)
-                    putUnsignedCharArrayUsbUsart(cdc_In_buffer, 0); // JTR ZLP at end of last packet was CDC_BUFFER_SIZE
-
-            }
-            irS.RXsamples = 0;
-            irS.flushflag = 0;
-        }
-
-    } else {//overflow error
-        //on overflow we loop until we can send 6 0xff then reset everything
-
-        WaitInReady();
-        cdc_In_buffer[0] = 0xff; //add to USB send buffer
-        cdc_In_buffer[1] = 0xff; //add to USB send buffer
-        cdc_In_buffer[2] = 0xff; //add to USB send buffer
-        cdc_In_buffer[3] = 0xff; //add to USB send buffer
-        cdc_In_buffer[4] = 0xff; //add to USB send buffer
-        cdc_In_buffer[5] = 0xff; //add to USB send buffer
-        irS.RXsamples = 6;
-        putUnsignedCharArrayUsbUsart(cdc_In_buffer, irS.RXsamples); //send current buffer to USB
-
-        T1ON = 0; //t1 is the usb packet timeout, disable it
-        T0ON = 0; //timer0 off
-        T0_IF = 0;
- 
-       //reset the pin interrupt, just in case
-        IRRXIF = 0;
-
-        irS.RXsamples = 0;
-        irS.flushflag = 0;
-        irS.overflow = 0;
-        /* if overflow we should go back to normal mode */
-        LedOff();
-        cleanup();
-        return 1;
-    }
+   
     return 0; //CONTINUE
 }
 
-void cleanup(void) {
+void cleanupt(void) {
 
     CCP1CON = 0;
     T0ON = 0;
@@ -690,98 +622,10 @@ void cleanup(void) {
 //high priority interrupt routine
 //#pragma interrupt irsInterruptHandlerHigh
 
-void irsInterruptHandlerHigh(void) {
+void irtInterruptHandlerHigh(void) {
 
-    if (IRRXIE == 1 && IRRXIF == 1) { //if RB Port Change Interrupt
-
-        l = IRRX_PORT;
-        if (T0ON == 0) { //timer not running, setup and start
-            if (((l & IRRX_PIN) == 0)) {
-                //only if 0, must read PORTB to clear RBIF
-
-                ArmCDCInDB();
-
-                //LedOn();
-                TMR0H = 0; //first set the high byte
-                TMR0L = 0; //set low byte copies high byte too
-                T0_IE = 1;
-                T0_IF = 0;
-                T0ON = 1; //enable the timer
-
-                TMR1H = 0;
-                TMR1L = 0;
-                T1IF = 0; //clear the interrupt flag
-                T1IE = 1; //able interrupts...
-                T1ON = 1; //timer on
-
-                //setup the period capture module to measure the raw IR waveform period
-                if (irToy.HardwareVersion > 1) {
-                    //capture module measures raw IR frequency
-                    IRFREQ_CAP_SETUP();
-                    IRFREQ_CAPIF = 0;
-                    IRFREQ_CAPIE = 1;
-
-                    //frequency detector is also connected to TMR3 external clock
-                    //here we setup the 16bit counter to count the total number of clocks in the signal
-                    T3CON = 0b00000110;
-                    TMR3H = 0;
-                    TMR3L = 1; //first tick is rising edge after next falling edge
-                    T3CON |= 0b1; //turn it on
-
-                    modFreqCnt = 0; //used to ignore the first measurement and get the more accurate second measurement
-                }
-            }
-
-        } else {//timer running, save value and reset
-            //the goal is to reset the timer as quickly as possible
-            //later we can fine tune the start value to compensate for the lost cycles
-            T0ON = 0; //disable the timer
-            l = TMR0L; //read low byte, puts high byte in H
-            h = TMR0H; //read high byte
-            TMR0H = 0; //first set the high byte
-            TMR0L = 0; //set low byte copies high byte too
-            T0_IF = 0;
-            T0ON = 1; //enable the timer
-
-            //reset timer1, USB packet send timeout
-            T1ON = 0; //timer on
-            TMR1H = 0;
-            TMR1L = 0;
-            T1ON = 1; //timer on
-
-            if (irS.rxflag1 == 0) {//check if data is pending
-                h1 = h;
-                l1 = l;
-                irS.rxflag1 = 1;
-            } else if (irS.rxflag2 == 0) {
-                     irS.rxflag2 = 1;
-                     h2 = h;
-                     l2 = l;
-            } else {//error, overflow
-                irS.overflow = 1;
-            }
-        }
-        //clear portb interrupt
-        IRRXIF = 0; //Reset the RB Port Change Interrupt Flag bit
-
-    } else if (IRFREQ_CAPIF == 1 && IRFREQ_CAPIE == 1) {//capture of raw IR frequency
-        if (modFreqCnt < 6) {
-            //we capture on rising edge,
-            //this will return 3 samples
-            //subtract 2nd from 1st, 3rd from 2nd to get actual time
-            modFreq[modFreqCnt] = IRFREQ_CAP_H;
-            modFreqCnt++;
-            modFreq[modFreqCnt] = IRFREQ_CAP_L;
-            modFreqCnt++;
-
-            IRFREQ_CAPIF = 0;
-
-            if (modFreqCnt == 6) {
-                IRFREQ_CAPIE = 0;
-                IRFREQ_CCPxCON = 0;
-            }
-        }
-    } else if (T0_IE == 1 && T0_IF == 1) { //is this timer 0 interrupt?
+   
+    if (T0_IE == 1 && T0_IF == 1) { //is this timer 0 interrupt?
         //the idea is that if we got here
         //it has been so long without a pin change that
         //there is not more signal
@@ -797,21 +641,7 @@ void irsInterruptHandlerHigh(void) {
         if (irS.TX == 1) {//timer0 interrupt means the IR transmit period is over
             T0_IE = 0;
 
-			//in transmit mode, but no new data is available
-            if (irS.txflag == 0) { 
-
-				if(tmr0_buf[2]==0x00) irS.txerror=1; //if not end flag, raise buffer underrun error
-
-                //disable the PWM, output ground
-                PWMoff();
-                LedOff();
-                irS.TX = 0;
-                //reset receive interrupt
-                IRRXIF = 0;
-                IRRXIE = 1; // JTR debug note, Watch the effect of this
-                IRRXIF = 0;
-                return;
-            }
+		
 
             if (irS.TXInvert == IRS_TRANSMIT_HI) {
                 //enable the PWM
@@ -831,30 +661,7 @@ void irsInterruptHandlerHigh(void) {
             T0ON = 1; //enable the timer
             irS.txflag = 0; //buffer ready for new byte
 
-        } else {//receive mode
-            // packet terminator, 1.7S with no signal
-            if (irS.rxflag1 == 0) {//check if data is pending
-                h1 = 0xff; //add to USB send buffer
-                l1 = 0xff; //add to USB send buffer
-                irS.rxflag1 = 1;
-                //set the flush flag to send the packet from the main loop
-                irS.flushflag = 1;
-            } else if (irS.rxflag2 == 0) {
-                     irS.rxflag2 = 1;
-                     h2 = 0xff; //add to USB send buffer
-                     l2 = 0xff; //add to USB send buffer
-                     //set the flush flag to send the packet from the main loop
-                     irS.flushflag = 1;
-            } else {//error, overflow
-                irS.overflow = 1;
-            }
-
-            //reset the pin interrupt, just in case
-            IRRXIE = 1;
-            IRRXIF = 0;
-
-            //LedOff();
-        }
+        } 
     } else if (T1IE == 1 && T1IF == 1) { //is this timer 1 interrupt?
         //this is another timer
         //it tells the main loop to send any pending USB bytes

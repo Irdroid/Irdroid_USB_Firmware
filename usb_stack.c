@@ -757,6 +757,9 @@ BYTE FAST_usb_handler(void) {
             ClearUsbInterruptFlag(USB_URST);
             return 0xFF;
         }
+        
+       
+       
         if (USB_TRANSACTION_FLAG) {
             trn_status = GetUsbTransaction();
             if (USB_STAT2EP(trn_status)) {
